@@ -1,114 +1,147 @@
 import os
 import json
 import logging
+import sys
 import requests
 from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-# ------------------ Logging ------------------
+# ==============================
+# Logging Setup (10–20 lines max per run)
+# ==============================
 logging.basicConfig(
-    format="%(asctime)s - %(levelname)s - %(message)s",
+    stream=sys.stdout,
     level=logging.INFO,
-    handlers=[
-        logging.FileHandler("bot.log"),   # save logs to file
-        logging.StreamHandler()           # also print to console
-    ]
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    datefmt="%H:%M:%S"
 )
 logger = logging.getLogger(__name__)
 
-# ------------------ Bot Token ------------------
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-if not BOT_TOKEN:
-    logger.error("❌ TELEGRAM_BOT_TOKEN not set in environment!")
-    raise ValueError("TELEGRAM_BOT_TOKEN must be set as an environment variable")
-
-# ------------------ User Data ------------------
+# ==============================
+# Config & Storage
+# ==============================
+BOT_TOKEN = os.getenv("BOT_TOKEN")  # Set in GitHub Secrets
 USERS_FILE = "users.json"
 
 def load_users():
-    try:
-        if os.path.exists(USERS_FILE):
-            with open(USERS_FILE, "r") as f:
-                return json.load(f)
-    except Exception as e:
-        logger.error(f"Failed to load {USERS_FILE}: {e}")
+    if os.path.exists(USERS_FILE):
+        with open(USERS_FILE, "r") as f:
+            return json.load(f)
     return {}
 
 def save_users(users):
-    try:
-        with open(USERS_FILE, "w") as f:
-            json.dump(users, f, indent=2)
-    except Exception as e:
-        logger.error(f"Failed to save {USERS_FILE}: {e}")
+    with open(USERS_FILE, "w") as f:
+        json.dump(users, f)
 
 users = load_users()
 
-# ------------------ NSE Filing Fetch ------------------
-def get_latest_filings(stock_symbol):
+# ==============================
+# NSE Filing API Helper
+# ==============================
+def fetch_filings(stock_symbol):
+    """
+    Fetch NSE corporate filings for a given stock.
+    For demo, we use NSE announcements API.
+    """
     url = f"https://www.nseindia.com/api/corporate-announcements?symbol={stock_symbol}"
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
-        r = requests.get(url, headers=headers, timeout=10)
-        r.raise_for_status()
-        data = r.json()
-        if "rows" in data and data["rows"]:
-            latest = data["rows"][0]
-            return f"📢 {stock_symbol} filing: {latest.get('desc', 'No desc')} ({latest.get('dt', '')})"
-        return f"No filings found for {stock_symbol}"
+        resp = requests.get(url, headers=headers, timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        return data.get("data", [])
     except Exception as e:
-        logger.error(f"Error fetching NSE filings for {stock_symbol}: {e}")
-        return f"❌ Error fetching NSE filings for {stock_symbol}"
+        logger.error(f"❌ Failed to fetch filings for {stock_symbol}: {e}")
+        return []
 
-# ------------------ Bot Commands ------------------
+# ==============================
+# Bot Commands
+# ==============================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.effective_chat.id)
-    if user_id not in users:
-        users[user_id] = {"stocks": []}
+    chat_id = str(update.effective_chat.id)
+    if chat_id not in users:
+        users[chat_id] = {"stocks": []}
         save_users(users)
-    await update.message.reply_text("👋 Welcome! Use /add <STOCK> to track filings, /list to see your stocks.")
+    await update.message.reply_text(
+        "👋 Welcome! Use /add <SYMBOL> to track a stock (e.g. /add TCS).\n"
+        "Use /list to see tracked stocks.\n"
+        "Use /remove <SYMBOL> to stop tracking."
+    )
 
 async def add_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.effective_chat.id)
-    if not context.args:
-        await update.message.reply_text("⚠️ Usage: /add RELIANCE")
+    chat_id = str(update.effective_chat.id)
+    if len(context.args) == 0:
+        await update.message.reply_text("⚠️ Usage: /add <SYMBOL>")
         return
-    stock = context.args[0].upper()
-    users.setdefault(user_id, {"stocks": []})
-    if stock not in users[user_id]["stocks"]:
-        users[user_id]["stocks"].append(stock)
+    symbol = context.args[0].upper()
+    users.setdefault(chat_id, {"stocks": []})
+    if symbol not in users[chat_id]["stocks"]:
+        users[chat_id]["stocks"].append(symbol)
         save_users(users)
-        await update.message.reply_text(f"✅ Added {stock} to your watchlist.")
+        await update.message.reply_text(f"✅ Added {symbol} to your watchlist.")
     else:
-        await update.message.reply_text(f"ℹ️ {stock} is already in your list.")
+        await update.message.reply_text(f"ℹ️ {symbol} is already in your list.")
 
 async def list_stocks(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.effective_chat.id)
-    stocks = users.get(user_id, {}).get("stocks", [])
+    chat_id = str(update.effective_chat.id)
+    stocks = users.get(chat_id, {}).get("stocks", [])
     if stocks:
-        await update.message.reply_text("📌 Your watchlist: " + ", ".join(stocks))
+        await update.message.reply_text("📊 Your watchlist: " + ", ".join(stocks))
     else:
-        await update.message.reply_text("❌ You are not tracking any stocks. Use /add <STOCK>.")
+        await update.message.reply_text("⚠️ Your watchlist is empty. Add stocks with /add <SYMBOL>.")
 
-async def filings(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = str(update.effective_chat.id)
-    stocks = users.get(user_id, {}).get("stocks", [])
-    if not stocks:
-        await update.message.reply_text("❌ No stocks in your watchlist. Use /add <STOCK>.")
+async def remove_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    chat_id = str(update.effective_chat.id)
+    if len(context.args) == 0:
+        await update.message.reply_text("⚠️ Usage: /remove <SYMBOL>")
         return
-    for stock in stocks:
-        filing_msg = get_latest_filings(stock)
-        await update.message.reply_text(filing_msg)
+    symbol = context.args[0].upper()
+    if chat_id in users and symbol in users[chat_id]["stocks"]:
+        users[chat_id]["stocks"].remove(symbol)
+        save_users(users)
+        await update.message.reply_text(f"🗑 Removed {symbol} from your watchlist.")
+    else:
+        await update.message.reply_text(f"⚠️ {symbol} not found in your list.")
 
-# ------------------ Main ------------------
+# ==============================
+# Scheduled Job
+# ==============================
+async def check_filings(context: ContextTypes.DEFAULT_TYPE):
+    logger.info("🔄 Bot started job cycle")
+    for chat_id, data in users.items():
+        stocks = data.get("stocks", [])
+        if not stocks:
+            continue
+        logger.info(f"📊 Monitoring {len(stocks)} stocks for user {chat_id}")
+        updates = []
+        for stock in stocks:
+            filings = fetch_filings(stock)
+            if filings:
+                latest = filings[0]
+                msg = f"{stock}: {latest.get('sm_desc', 'New Filing')} ({latest.get('an_dt', '')})"
+                updates.append(msg)
+                logger.info(f"✅ {msg}")
+        if updates:
+            await context.bot.send_message(chat_id=chat_id, text="\n".join(updates))
+        else:
+            logger.info(f"ℹ️ No updates for {', '.join(stocks)}")
+    logger.info("🏁 Bot finished job cycle")
+
+# ==============================
+# Main
+# ==============================
 def main():
-    app = Application.builder().token(BOT_TOKEN).build()
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("add", add_stock))
     app.add_handler(CommandHandler("list", list_stocks))
-    app.add_handler(CommandHandler("filings", filings))
+    app.add_handler(CommandHandler("remove", remove_stock))
 
-    logger.info("🤖 Bot started successfully")
+    # Run every 5 minutes
+    app.job_queue.run_repeating(check_filings, interval=300, first=5)
+
+    logger.info("🚀 Bot is running...")
     app.run_polling()
 
 if __name__ == "__main__":
