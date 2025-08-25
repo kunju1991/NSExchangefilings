@@ -37,8 +37,15 @@ jobs:
           git commit -m "Update users.json" || echo "No changes to commit"
           git push || echo "No changes pushed"
 
+      - name: Show recent logs
+        if: always()
+        run: |
+          echo "---- Last 50 lines of bot.log ----"
+          tail -n 50 bot.log || echo "No log file found"
+
       - name: Upload logs
-        uses: actions/upload-artifact@v3
+        if: always()
+        uses: actions/upload-artifact@v4
         with:
           name: bot-logs
           path: bot.log
