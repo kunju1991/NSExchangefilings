@@ -51,7 +51,7 @@ def fetch_filings(stock_symbol):
     Fetch NSE corporate filings for a given stock.
     For demo, we use NSE announcements API.
     """
-    url = f"https://www.nseindia.com/api/corporate-announcements?symbol={stock_symbol}"
+    url = f"https://www.nseindia.com/api/corporate-announcements?index=equities&symbol={stock_symbol}"
     headers = {"User-Agent": "Mozilla/5.0"}
     try:
         resp = requests.get(url, headers=headers, timeout=10)
@@ -155,6 +155,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
