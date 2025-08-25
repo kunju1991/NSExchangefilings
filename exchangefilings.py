@@ -20,7 +20,10 @@ logger = logging.getLogger(__name__)
 # ==============================
 # Config & Storage
 # ==============================
-BOT_TOKEN = os.getenv("BOT_TOKEN")  # Set in GitHub Secrets
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+if not BOT_TOKEN:
+    logger.error("❌ TELEGRAM_BOT_TOKEN is missing! Set it as a GitHub Secret.")
+    sys.exit(1)
 USERS_FILE = "users.json"
 
 def load_users():
@@ -146,3 +149,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
