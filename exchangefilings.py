@@ -2,6 +2,8 @@ import requests # type: ignore
 import json
 import os
 
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+
 # === Config ===
 NSE_URL = "https://www.nseindia.com/api/corporate-announcements?index=equities&symbol={symbol}"
 HEADERS = {
@@ -10,7 +12,7 @@ HEADERS = {
     "Referer": "https://www.nseindia.com/"
 }
 
-BOT_TOKEN = os.getenv("8372701249:AAFbzxUMHM_IXFJttgp_0vepx1h24CbuLF0")
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 DATA_FILE = "users.json"   # stores each user's stocks + last seen filings
 
 
@@ -33,16 +35,15 @@ def fetch_filings(symbol):
     return resp.json().get("announcements", [])
 
 def send_to_telegram(chat_id, msg):
-    url = f"https://api.telegram.org/bot{8372701249:AAFbzxUMHM_IXFJttgp_0vepx1h24CbuLF0}/sendMessage"
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
     data = {"chat_id": chat_id, "text": msg, "parse_mode": "HTML"}
     requests.post(url, data=data)
 
 def get_updates(offset=None):
-    url = f"https://api.telegram.org/bot{8372701249:AAFbzxUMHM_IXFJttgp_0vepx1h24CbuLF0}/getUpdates"
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates"
     params = {"offset": offset, "timeout": 5}
     resp = requests.get(url, params=params).json()
     return resp.get("result", [])
-
 
 # === Command Handling ===
 def handle_commands(data, updates):
@@ -114,3 +115,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
