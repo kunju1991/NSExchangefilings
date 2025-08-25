@@ -24,7 +24,7 @@ jobs:
       - name: Run NSE Bot
         run: python exchangefilings.py
         env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.8372701249:AAFbzxUMHM_IXFJttgp_0vepx1h24CbuLF0 }}
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
 
       - name: Commit & Push users.json
         run: |
