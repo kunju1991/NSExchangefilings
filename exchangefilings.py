@@ -1,118 +1,115 @@
-import requests # type: ignore
-import json
 import os
+import json
+import logging
+import requests
+from telegram import Update
+from telegram.ext import Application, CommandHandler, ContextTypes
 
+# ------------------ Logging ------------------
+logging.basicConfig(
+    format="%(asctime)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+    handlers=[
+        logging.FileHandler("bot.log"),   # save logs to file
+        logging.StreamHandler()           # also print to console
+    ]
+)
+logger = logging.getLogger(__name__)
+
+# ------------------ Bot Token ------------------
 BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+if not BOT_TOKEN:
+    logger.error("❌ TELEGRAM_BOT_TOKEN not set in environment!")
+    raise ValueError("TELEGRAM_BOT_TOKEN must be set as an environment variable")
 
-# === Config ===
-NSE_URL = "https://www.nseindia.com/api/corporate-announcements?index=equities&symbol={symbol}"
-HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)",
-    "Accept": "application/json",
-    "Referer": "https://www.nseindia.com/"
-}
+# ------------------ User Data ------------------
+USERS_FILE = "users.json"
 
-BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-DATA_FILE = "users.json"   # stores each user's stocks + last seen filings
-
-
-# === Helpers ===
-def load_data():
-    if os.path.exists(DATA_FILE):
-        with open(DATA_FILE, "r") as f:
-            return json.load(f)
+def load_users():
+    try:
+        if os.path.exists(USERS_FILE):
+            with open(USERS_FILE, "r") as f:
+                return json.load(f)
+    except Exception as e:
+        logger.error(f"Failed to load {USERS_FILE}: {e}")
     return {}
 
-def save_data(data):
-    with open(DATA_FILE, "w") as f:
-        json.dump(data, f)
+def save_users(users):
+    try:
+        with open(USERS_FILE, "w") as f:
+            json.dump(users, f, indent=2)
+    except Exception as e:
+        logger.error(f"Failed to save {USERS_FILE}: {e}")
 
-def fetch_filings(symbol):
-    s = requests.Session()
-    s.headers.update(HEADERS)
-    resp = s.get(NSE_URL.format(symbol=symbol), timeout=10)
-    resp.raise_for_status()
-    return resp.json().get("announcements", [])
+users = load_users()
 
-def send_to_telegram(chat_id, msg):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    data = {"chat_id": chat_id, "text": msg, "parse_mode": "HTML"}
-    requests.post(url, data=data)
+# ------------------ NSE Filing Fetch ------------------
+def get_latest_filings(stock_symbol):
+    url = f"https://www.nseindia.com/api/corporate-announcements?symbol={stock_symbol}"
+    headers = {"User-Agent": "Mozilla/5.0"}
+    try:
+        r = requests.get(url, headers=headers, timeout=10)
+        r.raise_for_status()
+        data = r.json()
+        if "rows" in data and data["rows"]:
+            latest = data["rows"][0]
+            return f"📢 {stock_symbol} filing: {latest.get('desc', 'No desc')} ({latest.get('dt', '')})"
+        return f"No filings found for {stock_symbol}"
+    except Exception as e:
+        logger.error(f"Error fetching NSE filings for {stock_symbol}: {e}")
+        return f"❌ Error fetching NSE filings for {stock_symbol}"
 
-def get_updates(offset=None):
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/getUpdates"
-    params = {"offset": offset, "timeout": 5}
-    resp = requests.get(url, params=params).json()
-    return resp.get("result", [])
+# ------------------ Bot Commands ------------------
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_chat.id)
+    if user_id not in users:
+        users[user_id] = {"stocks": []}
+        save_users(users)
+    await update.message.reply_text("👋 Welcome! Use /add <STOCK> to track filings, /list to see your stocks.")
 
-# === Command Handling ===
-def handle_commands(data, updates):
-    new_offset = None
-    for upd in updates:
-        new_offset = upd["update_id"] + 1
-        if "message" not in upd:
-            continue
+async def add_stock(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_chat.id)
+    if not context.args:
+        await update.message.reply_text("⚠️ Usage: /add RELIANCE")
+        return
+    stock = context.args[0].upper()
+    users.setdefault(user_id, {"stocks": []})
+    if stock not in users[user_id]["stocks"]:
+        users[user_id]["stocks"].append(stock)
+        save_users(users)
+        await update.message.reply_text(f"✅ Added {stock} to your watchlist.")
+    else:
+        await update.message.reply_text(f"ℹ️ {stock} is already in your list.")
 
-        chat_id = str(upd["message"]["chat"]["id"])
-        msg = upd["message"].get("text", "").strip().upper()
+async def list_stocks(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_chat.id)
+    stocks = users.get(user_id, {}).get("stocks", [])
+    if stocks:
+        await update.message.reply_text("📌 Your watchlist: " + ", ".join(stocks))
+    else:
+        await update.message.reply_text("❌ You are not tracking any stocks. Use /add <STOCK>.")
 
-        # Ensure private chat only
-        if upd["message"]["chat"]["type"] != "private":
-            continue
+async def filings(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = str(update.effective_chat.id)
+    stocks = users.get(user_id, {}).get("stocks", [])
+    if not stocks:
+        await update.message.reply_text("❌ No stocks in your watchlist. Use /add <STOCK>.")
+        return
+    for stock in stocks:
+        filing_msg = get_latest_filings(stock)
+        await update.message.reply_text(filing_msg)
 
-        if chat_id not in data:
-            data[chat_id] = {"stocks": ["RELIANCE"], "last_filings": {}}
-            send_to_telegram(chat_id, "👋 Welcome! Monitoring started for RELIANCE. Use /add STOCK to track more.")
-
-        if msg.startswith("/ADD "):
-            sym = msg.split()[1]
-            if sym not in data[chat_id]["stocks"]:
-                data[chat_id]["stocks"].append(sym)
-                send_to_telegram(chat_id, f"✅ Added {sym} to your monitoring list")
-
-        elif msg.startswith("/REMOVE "):
-            sym = msg.split()[1]
-            if sym in data[chat_id]["stocks"]:
-                data[chat_id]["stocks"].remove(sym)
-                send_to_telegram(chat_id, f"❌ Removed {sym} from your monitoring list")
-
-        elif msg == "/LIST":
-            send_to_telegram(chat_id, "📊 You are monitoring: " + ", ".join(data[chat_id]["stocks"]))
-
-    return data, new_offset
-
-
-# === Main Logic ===
+# ------------------ Main ------------------
 def main():
-    data = load_data()
-    offset = None
+    app = Application.builder().token(BOT_TOKEN).build()
 
-    # Process commands
-    updates = get_updates(offset)
-    data, new_offset = handle_commands(data, updates)
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("add", add_stock))
+    app.add_handler(CommandHandler("list", list_stocks))
+    app.add_handler(CommandHandler("filings", filings))
 
-    # Check new filings for each user
-    for chat_id, user in data.items():
-        for symbol in user["stocks"]:
-            current = fetch_filings(symbol)
-            prev = user["last_filings"].get(symbol, [])
-
-            new_filings = [f for f in current if f["slug"] not in prev]
-
-            for f in new_filings:
-                msg = (
-                    f"<b>{f['sm_symbol']}</b> - {f['headline']}\n"
-                    f"Date: {f['ann_date']}\n"
-                    f"{f['pdfLink']}"
-                )
-                send_to_telegram(chat_id, msg)
-
-            # update state
-            user["last_filings"][symbol] = [f["slug"] for f in current]
-
-    save_data(data)
-
+    logger.info("🤖 Bot started successfully")
+    app.run_polling()
 
 if __name__ == "__main__":
     main()
-
