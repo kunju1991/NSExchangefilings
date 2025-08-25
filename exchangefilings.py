@@ -144,9 +144,11 @@ def main():
     # Run every 5 minutes
     app.job_queue.run_repeating(check_filings, interval=300, first=5)
 
-    logger.info("🚀 Bot is running...")
+    logger.info("✅ NSE Bot started successfully, monitoring user stock lists every 5 minutes...")
+
     app.run_polling()
 
 if __name__ == "__main__":
     main()
+
 
