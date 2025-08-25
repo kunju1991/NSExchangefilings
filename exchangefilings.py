@@ -15,6 +15,11 @@ logging.basicConfig(
     format="%(asctime)s - %(levelname)s - %(message)s",
     datefmt="%H:%M:%S"
 )
+# Suppress verbose HTTP logs from telegram/httpx
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("telegram").setLevel(logging.WARNING)
+logging.getLogger("telegram.ext").setLevel(logging.WARNING)
+
 logger = logging.getLogger(__name__)
 
 # ==============================
@@ -150,5 +155,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
