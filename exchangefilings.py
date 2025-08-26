@@ -1,71 +1,57 @@
-import os
-import logging
 import requests
+import logging
+import os
 from telegram import Bot
 
-# Logging setup
 logging.basicConfig(
-    format="%(asctime)s - %(levelname)s - %(message)s",
     level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-# Read secrets
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-    raise RuntimeError("❌ TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is missing!")
+if not BOT_TOKEN or not CHAT_ID:
+    logging.error("❌ TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is missing!")
+    exit(1)
 
-bot = Bot(token=TELEGRAM_BOT_TOKEN)
+bot = Bot(token=BOT_TOKEN)
 
-# NSE headers
+STOCKS = ["RELIANCE", "TCS", "HDFCBANK"]
+
+# NSE requires headers
 HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/120.0.0.0 Safari/537.36"
-    ),
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                  "AppleWebKit/537.36 (KHTML, like Gecko) "
+                  "Chrome/119.0.0.0 Safari/537.36",
     "Accept": "application/json, text/plain, */*",
+    "Accept-Encoding": "gzip, deflate, br",
     "Accept-Language": "en-US,en;q=0.9",
     "Referer": "https://www.nseindia.com/",
-    "Connection": "keep-alive",
+    "Connection": "keep-alive"
 }
 
-# Stocks to track
-STOCK_SYMBOLS = ["RELIANCE", "TCS", "HDFCBANK"]
 
-
-def fetch_announcements(stock_symbol: str):
-    """Fetch latest corporate announcement for a given stock."""
+def fetch_filings(stock_symbol):
     url = f"https://www.nseindia.com/api/corporate-announcements?index=equities&symbol={stock_symbol}"
-
     try:
-        with requests.Session() as s:
-            s.headers.update(HEADERS)
+        session = requests.Session()
+        # first get cookies from NSE homepage
+        session.get("https://www.nseindia.com", headers=HEADERS, timeout=10)
+        response = session.get(url, headers=HEADERS, timeout=10)
+        response.raise_for_status()
+        data = response.json()
 
-            # Get cookies first
-            s.get("https://www.nseindia.com", timeout=10)
+        if not data or "AA" not in data:
+            logging.info(f"ℹ️ No filings found for {stock_symbol}")
+            return None
 
-            # Then hit API
-            resp = s.get(url, timeout=15)
-            resp.raise_for_status()
-            data = resp.json()
+        latest = data["AA"][0]
+        headline = latest.get("sm", "No headline")
+        date = latest.get("an_dt", "")
+        pdf_url = latest.get("attchmntFile", "")
 
-            announcements = data.get("corporateAnnouncements", [])
-            if not announcements:
-                logging.info(f"ℹ️ No announcements for {stock_symbol}")
-                return None
-
-            latest = announcements[0]
-            subject = latest.get("subject", "No subject")
-            date = latest.get("date", "Unknown date")
-            pdf_url = latest.get("pdfLink", "")
-
-            message = f"📢 {stock_symbol} filing ({date}):\n{subject}"
-            if pdf_url:
-                message += f"\n🔗 {pdf_url}"
-
-            return message
+        return f"📢 {stock_symbol}\n📰 {headline}\n📅 {date}\n🔗 {pdf_url}"
 
     except Exception as e:
         logging.error(f"Error fetching filings for {stock_symbol}: {e}")
@@ -74,11 +60,10 @@ def fetch_announcements(stock_symbol: str):
 
 def main():
     logging.info("🔄 Checking NSE filings (single-run mode)...")
-
-    for symbol in STOCK_SYMBOLS:
-        msg = fetch_announcements(symbol)
+    for stock in STOCKS:
+        msg = fetch_filings(stock)
         if msg:
-            bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg)
+            bot.send_message(chat_id=CHAT_ID, text=msg)
 
     logging.info("🏁 Job finished. Exiting now.")
 
