@@ -1,59 +1,62 @@
 import os
-import requests
 import logging
+import requests
 from telegram import Bot
 
-# --- Logging setup ---
+# Logging setup
 logging.basicConfig(
+    format="%(asctime)s - %(levelname)s - %(message)s",
     level=logging.INFO,
-    format="%(asctime)s - %(levelname)s - %(message)s"
 )
 
-# --- Environment variables from GitHub Secrets ---
+# Read secrets
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-if not TELEGRAM_BOT_TOKEN:
-    logging.error("❌ TELEGRAM_BOT_TOKEN is missing! Set it as a GitHub Secret.")
-    exit(1)
-
-if not TELEGRAM_CHAT_ID:
-    logging.error("❌ TELEGRAM_CHAT_ID is missing! Set it as a GitHub Secret.")
-    exit(1)
+if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
+    raise RuntimeError("❌ TELEGRAM_BOT_TOKEN or TELEGRAM_CHAT_ID is missing!")
 
 bot = Bot(token=TELEGRAM_BOT_TOKEN)
 
-# Example function to check filings
-def check_filings(stock_symbol="RELIANCE"):
+# NSE headers
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Safari/537.36"
+    ),
+    "Accept": "application/json, text/plain, */*",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Referer": "https://www.nseindia.com/",
+    "Connection": "keep-alive",
+}
+
+# Stocks to track
+STOCK_SYMBOLS = ["RELIANCE", "TCS", "HDFCBANK"]
+
+
+def fetch_announcements(stock_symbol: str):
+    """Fetch latest corporate announcement for a given stock."""
     url = f"https://www.nseindia.com/api/corporate-announcements?index=equities&symbol={stock_symbol}"
-    headers = {
-        "User-Agent": "Mozilla/5.0",
-        "Accept": "application/json"
-    }
 
     try:
-        resp = requests.get(url, headers=headers, timeout=15)
-        resp.raise_for_status()
-        data = resp.json()
+        with requests.Session() as s:
+            s.headers.update(HEADERS)
 
-        if not data or "corporateAnnouncements" not in data:
-            logging.warning(f"No announcements found for {stock_symbol}")
-            return
+            # Get cookies first
+            s.get("https://www.nseindia.com", timeout=10)
 
-        # Take only latest announcement (you can expand logic here)
-        latest = data["corporateAnnouncements"][0]
-        msg = f"📢 {stock_symbol} filing:\n{latest.get('subject', 'No subject')}"
-        logging.info(f"Sending to Telegram: {msg}")
+            # Then hit API
+            resp = s.get(url, timeout=15)
+            resp.raise_for_status()
+            data = resp.json()
 
-        bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg)
+            announcements = data.get("corporateAnnouncements", [])
+            if not announcements:
+                logging.info(f"ℹ️ No announcements for {stock_symbol}")
+                return None
 
-    except Exception as e:
-        logging.error(f"Error fetching filings for {stock_symbol}: {e}")
-
-def main():
-    logging.info("🔄 Checking NSE filings (single-run mode)...")
-    check_filings("RELIANCE")   # Example, add more tickers as needed
-    logging.info("🏁 Job finished. Exiting now.")
-
-if __name__ == "__main__":
-    main()
+            latest = announcements[0]
+            subject = latest.get("subject", "No subject")
+            date = latest.get("date", "Unknown date")
+            pdf_url = latest.get("pdfLink", "")
