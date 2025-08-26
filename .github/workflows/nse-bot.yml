@@ -28,5 +28,7 @@ jobs:
           pip install -r requirements.txt
 
       - name: Run NSE Exchange Filings Bot
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
         run: |
           python exchangefilings.py || echo "⚠️ Bot exited with error"
