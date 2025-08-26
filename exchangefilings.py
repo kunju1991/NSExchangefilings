@@ -60,3 +60,28 @@ def fetch_announcements(stock_symbol: str):
             subject = latest.get("subject", "No subject")
             date = latest.get("date", "Unknown date")
             pdf_url = latest.get("pdfLink", "")
+
+            message = f"📢 {stock_symbol} filing ({date}):\n{subject}"
+            if pdf_url:
+                message += f"\n🔗 {pdf_url}"
+
+            return message
+
+    except Exception as e:
+        logging.error(f"Error fetching filings for {stock_symbol}: {e}")
+        return None
+
+
+def main():
+    logging.info("🔄 Checking NSE filings (single-run mode)...")
+
+    for symbol in STOCK_SYMBOLS:
+        msg = fetch_announcements(symbol)
+        if msg:
+            bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=msg)
+
+    logging.info("🏁 Job finished. Exiting now.")
+
+
+if __name__ == "__main__":
+    main()
